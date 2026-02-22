@@ -10,7 +10,7 @@ pd.set_option('display.max_columns', None)  # to get a grasp of what data is pre
 
 # Data profiling
 
-# data.info()
+data.info()
 
 # We can see that ~32k rows with company name, and we can divide the data into three groups of columns: The location,
 # the social and the business groups Location columns (such as country, region, city, street, lat, lon) tells us
@@ -56,9 +56,9 @@ indian_spices = data.loc[data["website_domain"] == "indianspices.com"]
 
 
 def get_codes(df):
-    codes = ['isic_v4_codes', 'sic_codes', 'nace_rev2_codes', 'naics_2022_primary_code']
+    company_codes = ['isic_v4_codes', 'sic_codes', 'nace_rev2_codes', 'naics_2022_primary_code']
 
-    res = list(combinations(codes, 2))
+    res = list(combinations(company_codes, 2))
     for element in res:
         percentage = len(df[df[element[0]].notna() & df[element[1]].notna()]) / len(df[df[element[0]].notna()]) * 100
         print(f"What the chance to have both {element[0]} and {element[1]} in the same row?: {percentage}")
@@ -95,8 +95,9 @@ time = ['created_at', 'last_updated_at']
 all_cols = names + locations + codes + businesses + socials + time
 
 df_clean = data[all_cols]
+
+
 # print(df_clean.shape)
-import re
 
 
 def normalization(df):
@@ -128,7 +129,8 @@ def normalization(df):
 
 normalized = normalization(df_clean)
 
-check = normalized.groupby("website_domain")["main_industry"].value_counts().sort_values(ascending=False)
+
+# check = normalized.groupby("website_domain")["main_industry"].value_counts().sort_values(ascending=False)
 
 
 # print(check)
@@ -140,33 +142,98 @@ def tier_one(df):
     duplicates_tier1 = []
     group = df.groupby(["website_domain", "company_name"])
     for (website, name), group_df in group:
-        uq = group_df.groupby(["main_city", "main_postcode", "main_region"]).ngroups
-        if uq == 1:
-            completeness = group_df.notna().sum(axis=1)
+        location_groups = group_df.groupby(['main_country', 'main_region', 'main_city'])
+        for location, loc_group_df in location_groups:
+            completeness = loc_group_df.notna().sum(axis=1)
             master_row = completeness.idxmax()
-            duplicates = group_df.index[group_df.index != master_row]
-            duplicates_tier1.extend(duplicates)
+            duplicates = loc_group_df.index[loc_group_df.index != master_row]
+            if len(loc_group_df) > 1:
+                for column in loc_group_df.columns:
+                    if pd.isna(loc_group_df.loc[master_row, column]):
+                        for row in duplicates:
+                            if pd.notna(loc_group_df.loc[row, column]):
+                                loc_group_df.loc[master_row, column] = loc_group_df.loc[row, column]
+                                break
+                duplicates_tier1.extend(duplicates)
 
     df.drop(duplicates_tier1, inplace=True)
 
     return df
 
 
-df_1 = tier_one(normalized)
-fresh = normalized.loc[normalized["company_name"] == "fresh burger"]
-print(fresh.groupby(["main_city", "main_postcode", "main_region"]).ngroups)
+# df_1 = tier_one(normalized)
+# fresh = df_1.loc[df_1["company_name"] == "fresh burger"]
+# indian = df_1.loc[df_1["website_domain"] == "indianspices.com"]
+# orth = data.loc[data["website_domain"] == "360orthodontics.com"]
+# orth1 = df_1.loc[df_1["website_domain"] == "360orthodontics.com"]
+# #print(fresh.groupby(["main_city", "main_postcode", "main_region"]).ngroups)
+# print(fresh)
+# print(indian)
+# print(orth.shape)
+# print(orth1.shape)
+# print(normalized.shape)
+# print(df_1.shape)
 
-#print(df_1.loc[df_1["company_name"] == "fresh burger"].shape)
+# print(df_1.loc[df_1["company_name"] == "fresh burger"])
+
+def tier_two(df):
+    df = tier_one(df).copy()
+    duplicates_tier2 = []
+    group = df.groupby(['website_domain', 'company_name', 'main_city'])
+    for (website, name, city), group_df in group:
+        if len(group_df) == 1:
+            continue
+        same_business = group_df.groupby(['main_industry', 'main_sector']).ngroups
+        if same_business == 1:
+            completeness = group_df.notna().sum(axis=1)
+            master_row = completeness.idxmax()
+            duplicates = group_df.index[group_df.index != master_row]
+            duplicates_tier2.extend(duplicates)
+
+    df.drop(duplicates_tier2, inplace=True)
+
+    return df
 
 
+#
+df_2 = tier_two(normalized)
+# print(df_2)
 
-# print(charles['locations'])
-# this is a great case of data fragmentation. Different names (includes 'of' in some entries), codes for some
-# entries, same website domain for each of them, but different URLs (I and i)
+fresh2 = df_2.loc[df_2["company_name"] == "fresh burger"]
+# indian2 = df_2.loc[df_2["website_domain"] == "indianspices.com"]
+print(fresh2)
+print(normalized.shape)
+print(df_2.shape)
+# def add_id(df):
+#     df = tier_two(df)
+#     df["group_id"] = df.groupby("website_domain").ngroup()
+#     df.loc[df["website_domain"].isna(), "group_id"] = -1
+#
+#     return df
+#
+# df_final = add_id(normalized)
+# output = df_final.to_csv("entity_resolution.csv")
 
 
-# We can conclude our specific analysis -> We first normalize the columns for company names.
+# #print(df_2.loc[df_2["website_domain"] == "indianspices.com"])
+#
+#
+# def tier_three(df):
+#     df = tier_two(df).copy()
+#     duplicates_tier3 = []
+#     group = group = df.groupby(["website_domain", "company_name"])
+#     for (website, name), group_df in group:
+#         same_code = group_df.groupby(["naics_2022_primary_code"]).ngroups
+#         if same_code == 1:
+#             completeness_3 = group_df.notna().sum(axis=1)
+#             master_row_3 = completeness_3.idxmax()
+#             duplicates_3 = group_df.index[group_df.index != master_row_3]
+#             duplicates_tier3.extend(duplicates_3)
+#
+#     df.drop(duplicates_tier3, inplace=True)
+#     return df
+#
+# df_3 = tier_three(normalized)
+# print(df_3.shape)
 
-
-# We apply multiple checks: if two rows have the same codes, we can pretty much say they are the same company. Then
-# we have a look at the location. Third would be checks for business columns.
+# print(normalized[socials + businesses].nunique().sum())
