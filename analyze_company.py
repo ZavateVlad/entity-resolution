@@ -136,13 +136,34 @@ normalized = normalization(df_clean)
 # print(check)
 # print(normalized)
 
+
+def tier_zero(df):
+    df = df.copy()
+    website_group = df.groupby("website_domain")
+    for website, group_df in website_group:
+        company_names = group_df["company_name"].dropna()
+        if company_names.nunique() > 1:
+            company_counts = company_names.value_counts()
+            if company_counts.max() > 1:
+                canonical = company_counts.idxmax()
+                df.loc[group_df.index, "company_name"] = canonical
+            else:
+                longest = max(company_names, key=len)
+                df.loc[group_df.index, "company_name"] = longest
+
+    return df
+
+
+df_0 = tier_zero(normalized)
+
+
 # Tier one
 def tier_one(df):
     df = df.copy()
     duplicates_tier1 = []
     group = df.groupby(["website_domain", "company_name"])
     for (website, name), group_df in group:
-        location_groups = group_df.groupby(['main_country', 'main_region', 'main_city'])
+        location_groups = group_df.groupby(['main_country', 'main_region', 'main_city', 'main_street'])
         for location, loc_group_df in location_groups:
             completeness = loc_group_df.notna().sum(axis=1)
             master_row = completeness.idxmax()
@@ -152,7 +173,7 @@ def tier_one(df):
                     if pd.isna(loc_group_df.loc[master_row, column]):
                         for row in duplicates:
                             if pd.notna(loc_group_df.loc[row, column]):
-                                loc_group_df.loc[master_row, column] = loc_group_df.loc[row, column]
+                                df.loc[master_row, column] = df.loc[row, column]
                                 break
                 duplicates_tier1.extend(duplicates)
 
@@ -161,7 +182,9 @@ def tier_one(df):
     return df
 
 
-# df_1 = tier_one(normalized)
+df_1 = tier_one(df_0)
+
+
 # fresh = df_1.loc[df_1["company_name"] == "fresh burger"]
 # indian = df_1.loc[df_1["website_domain"] == "indianspices.com"]
 # orth = data.loc[data["website_domain"] == "360orthodontics.com"]
@@ -177,7 +200,7 @@ def tier_one(df):
 # print(df_1.loc[df_1["company_name"] == "fresh burger"])
 
 def tier_two(df):
-    df = tier_one(df).copy()
+    df = df.copy()
     duplicates_tier2 = []
     group = df.groupby(['website_domain', 'company_name', 'main_city'])
     for (website, name, city), group_df in group:
@@ -188,6 +211,12 @@ def tier_two(df):
             completeness = group_df.notna().sum(axis=1)
             master_row = completeness.idxmax()
             duplicates = group_df.index[group_df.index != master_row]
+            for column in group_df.columns:
+                if pd.isna(group_df.loc[master_row, column]):
+                    for row in duplicates:
+                        if pd.notna(group_df.loc[row, column]):
+                            df.loc[master_row, column] = df.loc[row, column]
+                            break
             duplicates_tier2.extend(duplicates)
 
     df.drop(duplicates_tier2, inplace=True)
@@ -196,44 +225,66 @@ def tier_two(df):
 
 
 #
-df_2 = tier_two(normalized)
+df_2 = tier_two(df_1)
 # print(df_2)
 
 fresh2 = df_2.loc[df_2["company_name"] == "fresh burger"]
-# indian2 = df_2.loc[df_2["website_domain"] == "indianspices.com"]
-print(fresh2)
-print(normalized.shape)
+indian2 = df_2.loc[df_2["website_domain"] == "indianspices.com"]
+orth2 = df_2.loc[df_2["website_domain"] == "360orthodontics.com"]
+
+
+# print(indian2)
+# print(fresh2)
+# print(orth2)
+# print(normalized.shape)
+# print(df_2.shape)
+
+def tier_three(df):
+    df = df.copy()
+    duplicates_tier3 = []
+    group = df.groupby(["website_domain", "company_name"])
+    for (website, name), group_df in group:
+        rows_with_code = group_df[group_df["naics_2022_primary_code"].notna()]
+        if len(rows_with_code) >= 1:
+            same_code = rows_with_code.groupby(["naics_2022_primary_code"]).ngroups
+            if same_code == 1:
+                completeness = rows_with_code.notna().sum(axis=1)
+                master_row = completeness.idxmax()
+                duplicates = rows_with_code.index[rows_with_code.index != master_row]
+
+                for column in group_df.columns:
+                    if pd.isna(group_df.loc[master_row, column]):
+                        for row in duplicates:
+                            if pd.notna(group_df.loc[row, column]):
+                                df.loc[master_row, column] = df.loc[row, column]
+                                break
+
+                duplicates_tier3.extend(duplicates)
+
+    df.drop(duplicates_tier3, inplace=True)
+    return df
+
+
+df_3 = tier_three(df_2)
+fresh3 = df_3.loc[df_3["company_name"] == "fresh burger"]
+indian3 = df_3.loc[df_3["website_domain"] == "indianspices.com"]
+orth3 = df_3.loc[df_3["website_domain"] == "360orthodontics.com"]
+owens3 = df_3[df_3["company_name"].str.contains("owens", na=False)]
+# print(fresh3)
+print(indian3)
+# print(owens3)
+# print(normalized.shape)
+print(df_0.shape)
+print(df_1.shape)
 print(df_2.shape)
+print(df_3.shape)
+
+
+
 # def add_id(df):
 #     df = tier_two(df)
 #     df["group_id"] = df.groupby("website_domain").ngroup()
 #     df.loc[df["website_domain"].isna(), "group_id"] = -1
 #
 #     return df
-#
-# df_final = add_id(normalized)
-# output = df_final.to_csv("entity_resolution.csv")
 
-
-# #print(df_2.loc[df_2["website_domain"] == "indianspices.com"])
-#
-#
-# def tier_three(df):
-#     df = tier_two(df).copy()
-#     duplicates_tier3 = []
-#     group = group = df.groupby(["website_domain", "company_name"])
-#     for (website, name), group_df in group:
-#         same_code = group_df.groupby(["naics_2022_primary_code"]).ngroups
-#         if same_code == 1:
-#             completeness_3 = group_df.notna().sum(axis=1)
-#             master_row_3 = completeness_3.idxmax()
-#             duplicates_3 = group_df.index[group_df.index != master_row_3]
-#             duplicates_tier3.extend(duplicates_3)
-#
-#     df.drop(duplicates_tier3, inplace=True)
-#     return df
-#
-# df_3 = tier_three(normalized)
-# print(df_3.shape)
-
-# print(normalized[socials + businesses].nunique().sum())
